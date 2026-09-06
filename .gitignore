@@ -1,0 +1,12 @@
+# 本機與 clasp 可能產生的環境檔，不納入公開程式庫。
+.clasp.json
+.claspignore
+node_modules/
+
+# Windows 與編輯器暫存檔。
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 請將實際資料庫 ID 保留在 Apps Script 的指令碼屬性，不要提交至版本控制。
+.env

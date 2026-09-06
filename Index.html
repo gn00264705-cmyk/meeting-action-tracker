@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>會議行事曆與改善事項</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    [v-cloak] { display: none; }
+    body { background: #f8fafc; -webkit-tap-highlight-color: transparent; }
+    .safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+  </style>
+</head>
+<body class="min-h-screen text-slate-700">
+  <div id="app" v-cloak>
+    <header class="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
+      <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
+        <div class="flex items-center gap-3">
+          <div class="rounded-xl bg-indigo-600 p-2 text-white"><i data-lucide="calendar-days" class="h-5 w-5"></i></div>
+          <div><h1 class="text-base font-bold text-slate-900">會議行事曆</h1><p class="text-xs text-slate-500">改善事項追蹤</p></div>
+        </div>
+        <div class="hidden items-center gap-2 sm:flex"><button @click="openImportModal" class="items-center gap-2 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm font-medium text-indigo-700 shadow-sm hover:bg-indigo-50">📥 匯入外部資料</button><button @click="openMeetingModal()" class="items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700"><i data-lucide="plus" class="h-4 w-4"></i>新增會議</button></div>
+      </div>
+      <nav class="mx-auto flex max-w-7xl gap-1 px-4 sm:px-6">
+        <button @click="activeTab='meetings'" :class="tabClass('meetings')" class="px-3 py-2.5 text-sm font-medium">會議總覽</button>
+        <button @click="activeTab='pending'" :class="tabClass('pending')" class="px-3 py-2.5 text-sm font-medium">未結案追蹤 <span v-if="openItems.length" class="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700">{{ openItems.length }}</span></button>
+        <button @click="activeTab='completedItems'" :class="tabClass('completedItems')" class="px-3 py-2.5 text-sm font-medium">已完成事項</button>
+      </nav>
+    </header>
+
+    <main class="mx-auto max-w-7xl px-4 pb-24 pt-5 sm:px-6 sm:pb-8">
+      <section v-if="activeTab === 'meetings'">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6" aria-label="未結案事項帳齡分析">
+          <button @click="openPendingDashboard(false)" class="bg-indigo-50/50 border border-indigo-100 rounded-xl p-4 cursor-pointer hover:shadow-md transition-all text-left"><div class="flex items-center justify-between gap-3"><span class="text-sm font-medium text-indigo-800">總待辦事項</span><i data-lucide="list-todo" class="h-5 w-5 text-indigo-600"></i></div><p class="mt-2 text-2xl font-bold text-indigo-700">{{ totalCount }}</p><p class="mt-1 text-xs text-indigo-600">跨月份全域累計</p></button>
+          <button @click="openPendingDashboard(true)" class="bg-amber-50/50 border border-amber-100 rounded-xl p-4 cursor-pointer hover:shadow-md transition-all text-left"><div class="flex items-center justify-between gap-3"><span class="text-sm font-medium text-amber-800">待辦超過 30 天</span><i data-lucide="clock-3" class="h-5 w-5 text-amber-600"></i></div><p class="mt-2 text-2xl font-bold text-amber-600">{{ over30Count }}</p><p class="mt-1 text-xs text-amber-700">需安排跟催進度</p></button>
+          <button @click="openPendingDashboard(true)" class="bg-rose-50/50 border border-rose-100 rounded-xl p-4 cursor-pointer hover:shadow-md transition-all text-left"><div class="flex items-center justify-between gap-3"><span class="text-sm font-medium text-rose-800">嚴重逾期超過 60 天</span><i data-lucide="triangle-alert" class="h-5 w-5 text-rose-600"></i></div><p class="mt-2 text-2xl font-bold text-rose-600">{{ over60Count }}</p><p class="mt-1 text-xs text-rose-700">需專案列管簽核</p></button>
+        </div>
+        <div class="mb-5 flex flex-wrap items-end justify-between gap-3">
+          <div><h2 class="text-xl font-bold text-slate-900">會議總覽</h2><p class="mt-1 text-sm text-slate-500">依日期由新到舊顯示，點選卡片可追蹤改善事項。</p></div>
+          <div class="flex items-end gap-3">
+            <label v-if="meetingViewMode === 'list'" class="block text-sm font-medium text-slate-600">檢視月份
+              <input v-model="selectedMonth" @change="fetchCurrentMonthMeetings" type="month" class="mt-1 block rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+            </label>
+            <div class="inline-flex rounded-lg bg-slate-100 p-1" aria-label="會議總覽檢視模式"><button @click="meetingViewMode = 'list'" :class="meetingViewMode === 'list' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'" class="rounded-md px-2.5 py-2 text-sm transition-all duration-200"><i data-lucide="list" class="mr-1 inline h-4 w-4"></i>清單</button><button @click="meetingViewMode = 'calendar'" :class="meetingViewMode === 'calendar' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'" class="rounded-md px-2.5 py-2 text-sm transition-all duration-200"><i data-lucide="calendar-days" class="mr-1 inline h-4 w-4"></i>月曆</button></div>
+          </div>
+        </div>
+
+        <div v-if="loading" class="space-y-3" aria-label="載入中">
+          <div v-for="n in 3" :key="n" class="animate-pulse rounded-xl border border-slate-200 bg-white p-5"><div class="h-5 w-2/5 rounded bg-slate-200"></div><div class="mt-4 h-3 w-3/5 rounded bg-slate-100"></div></div>
+        </div>
+        <div v-else-if="meetingViewMode === 'calendar'" class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4"><div class="flex items-center gap-2"><button @click="goToday" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">今天</button><button @click="changeCalendarMonth(-1)" class="icon-button" title="上個月"><i data-lucide="chevron-left" class="h-5 w-5"></i></button><button @click="changeCalendarMonth(1)" class="icon-button" title="下個月"><i data-lucide="chevron-right" class="h-5 w-5"></i></button></div><h3 class="text-lg font-bold text-slate-900">{{ calendarTitle }}</h3></div>
+          <div class="grid grid-cols-7 border-b border-gray-100 bg-slate-50"><div v-for="weekday in calendarWeekdays" :key="weekday" class="py-2 text-center text-xs font-semibold text-slate-500">{{ weekday }}</div></div>
+          <div class="grid grid-cols-7">
+            <div v-for="day in calendarDays" :key="day.date" @click="openMeetingModal(null, day.date)" class="border border-gray-100 min-h-[110px] p-1.5 flex flex-col justify-start hover:bg-gray-50 cursor-pointer transition-colors">
+              <div class="flex items-center justify-between"><span :class="[day.inCurrentMonth ? 'text-slate-700' : 'text-gray-300', day.isToday ? 'bg-indigo-600 text-white' : '']" class="flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium">{{ day.dayNumber }}</span><span v-if="day.events.length" class="h-2 w-2 rounded-full bg-indigo-500 md:hidden"></span></div>
+              <div class="mt-1 hidden md:block"><button v-for="meeting in day.events.slice(0, 3)" :key="meeting.meeting_id" @click.stop="openMeetingDetails(meeting)" class="text-xs p-1 rounded mb-1 truncate bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1 w-full text-left"><span class="shrink-0">{{ meeting.start_time }}</span><span class="truncate">{{ meeting.title }}</span><span class="ml-auto rounded-full bg-indigo-100 px-1 text-[10px]">{{ meeting.items.length }}</span></button><span v-if="day.events.length > 3" class="block px-1 text-xs font-medium text-indigo-600">+{{ day.events.length - 3 }} 更多</span></div>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="!meetings.length" class="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-14 text-center">
+          <i data-lucide="calendar-x-2" class="mx-auto h-9 w-9 text-slate-400"></i><p class="mt-3 font-medium text-slate-700">這個月尚無會議紀錄</p><button @click="openMeetingModal()" class="mt-4 text-sm font-medium text-indigo-600 hover:text-indigo-800">新增第一筆會議</button>
+        </div>
+        <div v-else class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]">
+          <div class="space-y-3">
+            <article v-for="meeting in meetings" :key="meeting.meeting_id" class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div class="flex gap-3 p-4 sm:p-5">
+                <div class="w-12 shrink-0 rounded-lg bg-indigo-50 py-2 text-center text-indigo-700"><div class="text-xs font-semibold">{{ meeting.weekday.replace('星期', '週') }}</div><div class="text-xl font-bold leading-6">{{ dayOf(meeting.date) }}</div></div>
+                <div class="min-w-0 flex-1"><div class="flex flex-wrap items-start justify-between gap-2"><div><h3 class="break-words font-bold text-slate-900">{{ meeting.title }}</h3><p class="mt-1 flex items-center gap-1 text-sm text-slate-500"><i data-lucide="clock-3" class="h-3.5 w-3.5"></i>{{ meeting.date }}・{{ meeting.start_time }}–{{ meeting.end_time }}</p></div><div class="flex gap-1"><button @click="openMeetingModal(meeting)" class="icon-button" title="編輯會議"><i data-lucide="pencil" class="h-4 w-4"></i></button><button @click="syncMeeting(meeting)" class="icon-button" title="同步至 Google 日曆"><i data-lucide="calendar-sync" class="h-4 w-4"></i></button></div></div>
+                  <div class="mt-3 flex items-center justify-between"><button @click="toggleMeeting(meeting.meeting_id)" class="text-sm font-medium text-indigo-600">{{ expanded[meeting.meeting_id] ? '收合改善事項' : '檢視改善事項' }}（{{ meeting.items.length }}）</button><button @click="startQuickAdd(meeting)" class="rounded-md bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100">+ 新增改善事項</button></div>
+                </div>
+              </div>
+              <div v-if="expanded[meeting.meeting_id]" class="border-t border-slate-100 bg-slate-50 px-4 py-3 sm:px-5">
+                <div v-if="!meeting.items.length" class="py-3 text-center text-sm text-slate-500">尚無改善事項。</div>
+                <div v-for="item in meeting.items" :key="item.item_id" class="group flex gap-3 border-b border-slate-200 py-3 last:border-0">
+                  <input :checked="item.status === '已完成'" @change="toggleStatus(item)" type="checkbox" class="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+                  <button @click="openItemModal(item, meeting.meeting_id)" class="min-w-0 flex-1 text-left"><p :class="item.status === '已完成' ? 'text-slate-400 line-through' : 'text-slate-800'" class="break-words text-sm">{{ item.content }}</p><p class="mt-1 text-xs text-slate-500"><span v-if="item.source_person">來源：{{ item.source_person }} ・ </span><span :class="statusClass(item.status)" class="rounded-full px-2 py-0.5">{{ item.status }}</span><span v-if="item.notes" class="ml-1">・{{ item.notes }}</span></p></button>
+                  <button @click="deleteItem(item)" class="self-center p-1 text-slate-400 opacity-100 hover:text-rose-600 sm:opacity-0 sm:group-hover:opacity-100" title="刪除"><i data-lucide="trash-2" class="h-4 w-4"></i></button>
+                </div>
+                <form v-if="quickAddMeetingId === meeting.meeting_id" @submit.prevent="saveQuickItem(meeting)" class="mt-3 flex gap-2"><input ref="quickInput" v-model="quickItemContent" required maxlength="500" placeholder="輸入改善事項後按 Enter 儲存" class="min-w-0 flex-1 rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"><button class="rounded-lg bg-indigo-600 px-3 text-sm font-medium text-white">儲存</button><button type="button" @click="cancelQuickAdd" class="rounded-lg px-2 text-sm text-slate-500">取消</button></form>
+              </div>
+            </article>
+          </div>
+          <aside class="hidden h-fit rounded-xl border border-indigo-100 bg-indigo-50/60 p-5 lg:block"><i data-lucide="circle-plus" class="h-6 w-6 text-indigo-600"></i><h2 class="mt-3 font-bold text-slate-900">快速建立會議</h2><p class="mt-1 text-sm leading-6 text-slate-600">新增會議後，即可在卡片中直接記錄改善事項。</p><button @click="openMeetingModal()" class="mt-4 w-full rounded-lg bg-indigo-600 py-2 text-sm font-medium text-white hover:bg-indigo-700">新增會議</button></aside>
+        </div>
+      </section>
+
+      <section v-else-if="activeTab === 'pending'" id="pending-list" class="scroll-mt-24">
+        <div class="mb-5"><h2 class="text-xl font-bold text-slate-900">未結案追蹤</h2><p class="mt-1 text-sm text-slate-500">跨會議聚合所有尚未完成的改善事項。</p></div>
+        <div class="mb-3 flex flex-wrap gap-2"><button v-for="option in pendingTimeOptions" :key="option.value" @click="pendingTimeFilter = option.value" :class="timeFilterButtonClass(pendingTimeFilter, option.value)" class="rounded-full px-3 py-1.5 text-sm transition-colors">{{ option.label }}</button></div>
+        <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div class="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-2"><input v-model.trim="pendingSearch.keyword" placeholder="搜尋改善事項或會議名稱" class="w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"><input v-model.trim="pendingSearch.source" placeholder="依反映人／來源篩選" class="w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></div>
+          <div class="inline-flex self-end rounded-lg bg-slate-100 p-1 sm:self-auto" aria-label="未結案追蹤檢視模式">
+            <button @click="setViewMode('grid')" :class="viewMode === 'grid' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'" class="rounded-md p-2 transition-all duration-200" title="網格檢視" aria-label="網格檢視"><i data-lucide="grid-2x2" class="h-4 w-4"></i></button>
+            <button @click="setViewMode('list')" :class="viewMode === 'list' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'" class="rounded-md p-2 transition-all duration-200" title="條列檢視" aria-label="條列檢視"><i data-lucide="list" class="h-4 w-4"></i></button>
+          </div>
+        </div>
+        <div v-if="pendingLoading" class="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">載入全域未結案事項中…</div>
+        <div v-else-if="filteredOpenItems.length">
+          <div v-if="viewMode === 'grid'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            <article v-for="entry in filteredOpenItems" :key="entry.item.item_id" class="min-h-[160px] flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-200 hover:border-indigo-200 hover:shadow-md">
+              <div class="flex items-start gap-3"><input :checked="false" @change="toggleStatus(entry.item)" type="checkbox" class="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"><button @click="openItemModal(entry.item, entry.meeting.meeting_id)" :title="entry.item.content" class="min-w-0 flex-1 text-left"><p class="truncate text-base font-semibold text-slate-800">{{ entry.item.content }}</p></button></div>
+              <div class="mt-4 space-y-2"><span :title="entry.meeting.title" class="inline-flex max-w-full truncate rounded bg-gray-100 px-2 py-1 text-xs text-gray-600">{{ entry.meeting.date }}・{{ entry.meeting.title }}</span><p v-if="entry.item.source_person" class="truncate text-xs text-slate-500">來源：{{ entry.item.source_person }}</p></div>
+              <label class="mt-4 block text-xs font-medium text-slate-500">處理狀態<select :value="entry.item.status" @change="setStatus(entry.item, $event.target.value)" class="mt-1 block w-full rounded-md border-slate-300 bg-white py-2 text-sm text-slate-700 focus:border-indigo-500 focus:ring-indigo-500"><option v-for="status in statuses" :key="status">{{ status }}</option></select></label>
+            </article>
+          </div>
+          <div v-else class="flex flex-col gap-2.5">
+            <article v-for="entry in filteredOpenItems" :key="entry.item.item_id" class="flex flex-row items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all duration-200 hover:border-indigo-200">
+              <div class="flex min-w-0 flex-1 items-center gap-3"><input :checked="false" @change="toggleStatus(entry.item)" type="checkbox" class="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"><button @click="openItemModal(entry.item, entry.meeting.meeting_id)" :title="entry.item.content" class="min-w-0 flex-1 text-left"><p class="truncate text-sm font-medium text-slate-800">{{ entry.item.content }}</p></button></div>
+              <span :title="entry.meeting.title" class="inline-flex max-w-24 truncate rounded bg-gray-100 px-2 py-1 text-xs text-gray-600 sm:max-w-48">{{ entry.meeting.date }}・{{ entry.meeting.title }}</span>
+              <div class="flex shrink-0 items-center gap-2"><select :value="entry.item.status" @change="setStatus(entry.item, $event.target.value)" class="w-24 rounded-md border-slate-300 py-1.5 text-xs text-slate-700 focus:border-indigo-500 focus:ring-indigo-500"><option v-for="status in statuses" :key="status">{{ status }}</option></select><button @click="openItemModal(entry.item, entry.meeting.meeting_id)" class="rounded-md p-2 text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-700" title="編輯改善事項" aria-label="編輯改善事項"><i data-lucide="pencil" class="h-4 w-4"></i></button></div>
+            </article>
+          </div>
+        </div>
+        <div v-else class="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-14 text-center text-sm text-slate-500">沒有符合條件的未結案事項。</div>
+      </section>
+
+      <section v-else-if="activeTab === 'completedItems'">
+        <div class="mb-5"><h2 class="text-xl font-bold text-slate-900">已完成事項列表</h2><p class="mt-1 text-sm text-slate-500">依原始會議日期檢視已完成的改善事項。</p></div>
+        <div class="mb-3 flex flex-wrap gap-2"><button v-for="option in completedTimeOptions" :key="option.value" @click="completedTimeFilter = option.value" :class="timeFilterButtonClass(completedTimeFilter, option.value)" class="rounded-full px-3 py-1.5 text-sm transition-colors">{{ option.label }}</button></div>
+        <div v-if="completedTimeFilter === 'custom'" class="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+          <label class="text-sm font-medium text-slate-700">自：YYYY-MM-DD<input v-model="customDateRange.start" type="date" aria-label="自訂起始日期" class="mt-1 block rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+          <label class="text-sm font-medium text-slate-700">至：YYYY-MM-DD<input v-model="customDateRange.end" type="date" aria-label="自訂結束日期" class="mt-1 block rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+        </div>
+        <div class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2"><input v-model.trim="completedSearch.keyword" placeholder="搜尋改善事項或會議名稱" class="w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"><input v-model.trim="completedSearch.source" placeholder="依反映人／來源篩選" class="w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></div>
+        <div v-if="completedLoading" class="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">載入全域已完成事項中…</div>
+        <div v-else-if="filteredCompletedItems.length" class="flex flex-col gap-2.5">
+          <article v-for="entry in filteredCompletedItems" :key="entry.item.item_id" class="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-200 hover:border-emerald-200 sm:flex-row sm:items-center">
+            <div class="flex min-w-0 flex-1 items-center gap-3"><i data-lucide="circle-check-big" class="h-5 w-5 shrink-0 text-emerald-600"></i><button @click="openItemModal(entry.item, entry.meeting.meeting_id)" :title="entry.item.content" class="min-w-0 flex-1 text-left"><p class="truncate text-sm font-medium text-slate-500 line-through">{{ entry.item.content }}</p><p v-if="entry.item.source_person" class="mt-1 truncate text-xs text-slate-500">來源：{{ entry.item.source_person }}</p></button></div>
+            <span :title="entry.meeting.title" class="inline-flex max-w-full shrink-0 truncate rounded bg-slate-100 px-2 py-1 text-xs text-slate-600 sm:max-w-64">{{ entry.meeting.date }}・{{ entry.meeting.title }}</span>
+            <div class="flex shrink-0 items-center justify-end gap-2"><span class="rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700">已完成</span><button @click="openItemModal(entry.item, entry.meeting.meeting_id)" class="rounded-md p-2 text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-700" title="編輯改善事項" aria-label="編輯改善事項"><i data-lucide="pencil" class="h-4 w-4"></i></button></div>
+          </article>
+        </div>
+        <div v-else class="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-14 text-center text-sm text-slate-500">沒有符合條件的已完成事項。</div>
+      </section>
+    </main>
+
+    <button @click="openMeetingModal()" class="fixed bottom-20 right-5 z-20 rounded-full bg-indigo-600 p-4 text-white shadow-lg hover:bg-indigo-700 sm:hidden"><i data-lucide="plus" class="h-5 w-5"></i></button>
+    <nav class="safe-bottom fixed bottom-0 z-30 flex w-full border-t border-slate-200 bg-white px-4 pt-2 sm:hidden"><button @click="activeTab='meetings'" :class="mobileTabClass('meetings')" class="flex flex-1 flex-col items-center gap-1 text-xs"><i data-lucide="calendar-days" class="h-5 w-5"></i>會議</button><button @click="activeTab='pending'" :class="mobileTabClass('pending')" class="flex flex-1 flex-col items-center gap-1 text-xs"><i data-lucide="list-todo" class="h-5 w-5"></i>追蹤</button><button @click="activeTab='completedItems'" :class="mobileTabClass('completedItems')" class="flex flex-1 flex-col items-center gap-1 text-xs"><i data-lucide="circle-check-big" class="h-5 w-5"></i>已完成</button></nav>
+
+    <div v-if="meetingDetails.open" class="fixed inset-0 z-40 flex items-end bg-slate-900/40 sm:items-center sm:justify-center sm:p-4" @click.self="closeMeetingDetails"><div class="max-h-[85vh] w-full overflow-y-auto rounded-t-2xl bg-white p-5 shadow-xl sm:max-w-xl sm:rounded-2xl"><div class="flex items-start justify-between gap-4"><div><h2 class="break-words font-bold text-slate-900">{{ meetingDetails.meeting.title }}</h2><p class="mt-1 text-sm text-slate-500">{{ meetingDetails.meeting.date }}・{{ meetingDetails.meeting.start_time }}–{{ meetingDetails.meeting.end_time }}</p></div><button @click="closeMeetingDetails" class="p-1 text-slate-500"><i data-lucide="x" class="h-5 w-5"></i></button></div><div class="mt-5"><p class="text-sm font-semibold text-slate-700">改善事項（{{ meetingDetails.meeting.items.length }}）</p><div v-if="!meetingDetails.meeting.items.length" class="mt-3 rounded-lg bg-slate-50 p-4 text-center text-sm text-slate-500">此會議尚無改善事項。</div><div v-else class="mt-2 divide-y divide-slate-100"><div v-for="item in meetingDetails.meeting.items" :key="item.item_id" class="flex gap-3 py-3"><input :checked="item.status === '已完成'" @change="toggleStatus(item)" type="checkbox" class="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"><button @click="openItemModal(item, meetingDetails.meeting.meeting_id)" class="min-w-0 flex-1 text-left"><p class="break-words text-sm text-slate-800">{{ item.content }}</p><p class="mt-1 text-xs text-slate-500"><span :class="statusClass(item.status)" class="rounded-full px-2 py-0.5">{{ item.status }}</span><span v-if="item.source_person" class="ml-1">來源：{{ item.source_person }}</span></p></button></div></div></div><div class="mt-5 flex justify-end"><button @click="closeMeetingDetails" class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200">關閉</button></div></div></div>
+
+    <div v-if="importModal.open" class="fixed inset-0 z-40 flex items-end bg-slate-900/40 sm:items-center sm:justify-center sm:p-4" @click.self="closeImportModal"><div class="max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white p-5 shadow-xl sm:max-w-3xl sm:rounded-2xl"><div class="flex items-start justify-between gap-4"><div><h2 class="font-bold text-slate-900">匯入外部資料</h2><p class="mt-1 text-sm text-slate-500">支援舊版欄位：日期、星期、時間、會議名稱與其後的改善事項欄。</p></div><button @click="closeImportModal" class="p-1 text-slate-500" aria-label="關閉匯入視窗"><i data-lucide="x" class="h-5 w-5"></i></button></div>
+      <div class="mt-5 inline-flex rounded-lg bg-slate-100 p-1"><button @click="setImportMode('file')" :class="importModal.mode === 'file' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'" class="rounded-md px-3 py-2 text-sm font-medium">檔案上傳</button><button @click="setImportMode('paste')" :class="importModal.mode === 'paste' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'" class="rounded-md px-3 py-2 text-sm font-medium">文字貼上</button></div>
+      <div v-if="importModal.mode === 'file'" @dragover.prevent="importModal.dragActive = true" @dragleave.prevent="importModal.dragActive = false" @drop.prevent="handleImportDrop" @click="triggerImportFilePicker" :class="importModal.dragActive ? 'border-indigo-500 bg-indigo-50' : 'border-slate-300 bg-slate-50 hover:bg-slate-100'" class="mt-4 cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors"><input ref="importFileInput" @change="handleImportFileChange" accept=".xlsx,.xls" type="file" class="hidden"><i data-lucide="file-spreadsheet" class="mx-auto h-8 w-8 text-indigo-600"></i><p class="mt-3 text-sm font-medium text-slate-700">拖曳 Excel 檔案至此，或點擊選擇檔案</p><p class="mt-1 text-xs text-slate-500">支援 .xlsx、.xls 格式</p><p v-if="importModal.fileName" class="mt-3 text-xs font-medium text-indigo-700">已讀取：{{ importModal.fileName }}</p></div>
+      <div v-else class="mt-4"><label class="block text-sm font-medium text-slate-700">從 Excel 複製表格後貼到此處<textarea v-model="importModal.pasteText" @input="parsePastedImport" rows="7" class="mt-2 block w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="日期\t星期\t時間\t會議名稱\t改善事項 1\t改善事項 2"></textarea></label><p class="mt-2 text-xs text-slate-500">欄位以 Tab 分隔、列以換行分隔；第一列標題可保留，系統會自動略過。</p></div>
+      <div v-if="importModal.error" class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{{ importModal.error }}</div>
+      <div v-if="importModal.preview.length" class="mt-5"><div class="flex items-center justify-between"><h3 class="font-semibold text-slate-800">匯入預覽</h3><span class="rounded-full bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-700">{{ importModal.preview.length }} 場會議・{{ importItemCount }} 筆改善事項</span></div><div class="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1"><article v-for="(meeting, index) in importModal.preview" :key="index" class="rounded-xl border border-slate-200 bg-slate-50 p-3"><p class="font-medium text-slate-800">{{ meeting.title }}</p><p class="mt-1 text-xs text-slate-500">{{ meeting.date }}・{{ meeting.start_time }}–{{ meeting.end_time }}</p><ul v-if="meeting.items.length" class="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-600"><li v-for="(item, itemIndex) in meeting.items" :key="itemIndex">{{ item.content }}</li></ul><p v-else class="mt-2 text-sm text-slate-400">無改善事項</p></article></div></div>
+      <div class="mt-6 flex justify-end gap-2"><button @click="closeImportModal" :disabled="importModal.importing" class="rounded-lg px-4 py-2 text-sm text-slate-600">取消</button><button @click="confirmImport" :disabled="!importModal.preview.length || importModal.importing" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">{{ importModal.importing ? '匯入中…' : '確認匯入' }}</button></div>
+    </div></div>
+
+    <div v-if="meetingModal.open" class="fixed inset-0 z-40 flex items-end bg-slate-900/40 sm:items-center sm:justify-center sm:p-4" @click.self="closeMeetingModal"><form @submit.prevent="saveMeeting" class="w-full rounded-t-2xl bg-white p-5 shadow-xl sm:max-w-lg sm:rounded-2xl"><div class="mb-5 flex items-center justify-between"><h2 class="font-bold text-slate-900">{{ meetingModal.form.meeting_id ? '編輯會議' : '新增會議' }}</h2><button type="button" @click="closeMeetingModal" class="p-1 text-slate-500"><i data-lucide="x" class="h-5 w-5"></i></button></div><div class="space-y-4"><label class="block text-sm font-medium">會議名稱<input v-model.trim="meetingModal.form.title" required maxlength="150" class="input-field" placeholder="例如：專題進度會議"></label><div class="grid grid-cols-2 gap-3"><label class="block text-sm font-medium">日期<input v-model="meetingModal.form.date" required type="date" class="input-field"></label><label class="block text-sm font-medium">星期<input :value="weekdayPreview" disabled class="input-field bg-slate-50 text-slate-500"></label></div><div class="grid grid-cols-2 gap-3"><label class="block text-sm font-medium">開始時間<input v-model="meetingModal.form.start_time" required type="time" class="input-field"></label><label class="block text-sm font-medium">結束時間<input v-model="meetingModal.form.end_time" required type="time" class="input-field"></label></div></div><div class="mt-6 flex justify-end gap-2"><button type="button" @click="closeMeetingModal" class="rounded-lg px-4 py-2 text-sm text-slate-600">取消</button><button @click.prevent="saveMeeting" :disabled="saving" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{{ saving ? '儲存中…' : '儲存' }}</button></div></form></div>
+
+    <div v-if="itemModal.open" class="fixed inset-0 z-40 flex items-end bg-slate-900/40 sm:items-center sm:justify-center sm:p-4" @click.self="closeItemModal"><form @submit.prevent="saveItem" class="w-full rounded-t-2xl bg-white p-5 shadow-xl sm:max-w-lg sm:rounded-2xl"><div class="mb-5 flex items-center justify-between"><h2 class="font-bold text-slate-900">{{ itemModal.form.item_id ? '編輯改善事項' : '新增改善事項' }}</h2><button type="button" @click="closeItemModal" class="p-1 text-slate-500"><i data-lucide="x" class="h-5 w-5"></i></button></div><div class="space-y-4"><label class="block text-sm font-medium">改善事項<textarea v-model.trim="itemModal.form.content" required maxlength="500" rows="3" class="input-field" placeholder="請描述需改善或追蹤的事項"></textarea></label><label class="block text-sm font-medium">反映人／來源<input v-model.trim="itemModal.form.source_person" maxlength="100" class="input-field" placeholder="選填"></label><label class="block text-sm font-medium">狀態<select v-model="itemModal.form.status" class="input-field"><option v-for="status in statuses" :key="status">{{ status }}</option></select></label><label class="block text-sm font-medium">備註<input v-model.trim="itemModal.form.notes" maxlength="300" class="input-field" placeholder="選填"></label></div><div class="mt-6 flex justify-end gap-2"><button type="button" @click="closeItemModal" class="rounded-lg px-4 py-2 text-sm text-slate-600">取消</button><button :disabled="saving" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{{ saving ? '儲存中…' : '儲存' }}</button></div></form></div>
+
+    <div v-if="toast.message" class="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-lg px-4 py-3 text-sm text-white shadow-lg sm:bottom-6" :class="toast.type === 'error' ? 'bg-rose-600' : 'bg-slate-800'">{{ toast.message }}</div>
+  </div>
+  <div id="boot-error" style="display:none" class="mx-auto mt-12 max-w-xl rounded-xl border border-rose-200 bg-rose-50 p-5 text-rose-900"><h1 class="font-bold">系統載入失敗</h1><p class="mt-2 text-sm">請先確認 GAS 的 <code>Index.html</code> 已完整覆蓋並以新版本部署；下方訊息可協助判讀原因。</p><pre id="boot-error-detail" class="mt-3 overflow-x-auto whitespace-pre-wrap rounded-lg bg-white p-3 text-xs text-rose-800"></pre></div>
+
+  <script>
+    const { createApp, nextTick } = Vue;
+    const blankMeeting = () => ({ meeting_id: '', date: new Date().toISOString().slice(0, 10), start_time: '09:00', end_time: '10:00', title: '' });
+    const blankItem = () => ({ item_id: '', meeting_id: '', content: '', source_person: '', status: '待處理', notes: '' });
+    const showBootError = (error, context = '前端初始化') => {
+      const detail = error && error.message ? error.message : String(error || '未知錯誤');
+      const panel = document.getElementById('boot-error');
+      const output = document.getElementById('boot-error-detail');
+      if (panel && output) { output.textContent = context + '：' + detail; panel.style.display = 'block'; }
+      console.error(context, error);
+    };
+    window.addEventListener('error', event => showBootError(event.error || event.message, 'JavaScript 錯誤'));
+    window.addEventListener('unhandledrejection', event => showBootError(event.reason, '非同步錯誤'));
+    const app = createApp({
+      data() { return { activeTab: 'meetings', meetingViewMode: 'list', viewMode: (() => { try { return localStorage.getItem('openItemsViewMode') === 'list' ? 'list' : 'grid'; } catch (error) { return 'grid'; } })(), selectedMonth: new Date().toISOString().slice(0, 7), meetings: [], globalPendingItems: [], globalCompletedItems: [], pendingTimeFilter: 'all', completedTimeFilter: '30d', customDateRange: { start: '', end: '' }, pendingTimeOptions: [{ value: 'all', label: '全部' }, { value: '30d', label: '30天內' }, { value: '90d', label: '90天內' }, { value: '6m', label: '6個月內' }], completedTimeOptions: [{ value: '30d', label: '30天內' }, { value: '90d', label: '90天內' }, { value: '6m', label: '6個月內' }, { value: '1y', label: '1年內' }, { value: 'custom', label: '設定時間' }, { value: 'all', label: '全部顯示' }], pendingSearch: { keyword: '', source: '' }, completedSearch: { keyword: '', source: '' }, statuses: ['待處理', '處理中', '已完成'], expanded: {}, loading: true, pendingLoading: true, completedLoading: true, saving: false, quickAddMeetingId: '', quickItemContent: '', toast: { message: '', type: 'success' }, toastTimer: null, meetingModal: { open: false, form: blankMeeting() }, itemModal: { open: false, form: blankItem() }, meetingDetails: { open: false, meeting: null }, importModal: { open: false, mode: 'file', fileName: '', pasteText: '', preview: [], error: '', dragActive: false, importing: false } }; },
+      computed: {
+        openItems() { return this.globalPendingItems.map(item => ({ item, meeting: { meeting_id: item.meeting_id, date: item.meetingDate, title: item.meetingTitle, start_time: item.meetingStartTime } })); },
+        completedItems() { return this.globalCompletedItems.map(item => ({ item, meeting: { meeting_id: item.meeting_id, date: item.meetingDate, title: item.meetingTitle, start_time: item.meetingStartTime } })); },
+        pendingAgeMetrics() { const today = new Date(); today.setHours(0, 0, 0, 0); return this.globalPendingItems.reduce((metrics, item) => { const meetingDate = this.parseMeetingDate(item.meetingDate); const diffDays = meetingDate ? Math.floor((today.getTime() - meetingDate.getTime()) / 86400000) : null; metrics.totalCount += 1; if (diffDays !== null && diffDays >= 30) metrics.over30Count += 1; if (diffDays !== null && diffDays >= 60) metrics.over60Count += 1; return metrics; }, { totalCount: 0, over30Count: 0, over60Count: 0 }); },
+        totalCount() { return this.pendingAgeMetrics.totalCount; },
+        over30Count() { return this.pendingAgeMetrics.over30Count; },
+        over60Count() { return this.pendingAgeMetrics.over60Count; },
+        importItemCount() { return this.importModal.preview.reduce((count, meeting) => count + meeting.items.length, 0); },
+        filteredOpenItems() { return this.filterActionEntries(this.openItems, this.pendingSearch, this.pendingTimeFilter); },
+        filteredCompletedItems() { return this.filterActionEntries(this.completedItems, this.completedSearch, this.completedTimeFilter); },
+        weekdayPreview() { if (!this.meetingModal.form.date) return ''; return ['星期日','星期一','星期二','星期三','星期四','星期五','星期六'][new Date(this.meetingModal.form.date + 'T12:00:00').getDay()]; },
+        calendarWeekdays() { return ['日', '一', '二', '三', '四', '五', '六']; },
+        calendarTitle() { const parts = this.selectedMonth.split('-').map(Number); return parts[0] + ' 年 ' + String(parts[1]).padStart(2, '0') + ' 月'; },
+        calendarDays() { const parts = this.selectedMonth.split('-').map(Number); const firstDay = new Date(parts[0], parts[1] - 1, 1); const gridStart = new Date(parts[0], parts[1] - 1, 1 - firstDay.getDay()); const today = this.formatLocalDate(new Date()); return Array.from({ length: 42 }, (_, index) => { const date = new Date(gridStart); date.setDate(gridStart.getDate() + index); const text = this.formatLocalDate(date); return { date: text, dayNumber: date.getDate(), inCurrentMonth: text.startsWith(this.selectedMonth), isToday: text === today, events: this.meetings.filter(meeting => meeting.date === text) }; }); }
+      },
+      mounted() { this.fetchCurrentMonthMeetings(); this.fetchAllPendingItems(); this.fetchAllCompletedItems(); this.$nextTick(this.renderIcons); },
+      updated() { this.$nextTick(this.renderIcons); },
+      methods: {
+        renderIcons() { if (window.lucide) lucide.createIcons({ attrs: { 'stroke-width': 1.8 } }); },
+        setViewMode(mode) { if (mode !== 'grid' && mode !== 'list') return; this.viewMode = mode; try { localStorage.setItem('openItemsViewMode', mode); } catch (error) { /* 瀏覽器停用本機儲存時仍可在本次頁面正常切換。 */ } },
+        callApi(name, ...args) { return new Promise((resolve, reject) => google.script.run.withSuccessHandler(resolve).withFailureHandler(error => reject(new Error(error.message || '系統處理失敗。')))[name](...args)); },
+        async fetchCurrentMonthMeetings() { this.loading = true; try { const result = await this.callApi('apiGetMeetingsWithItems', { month: this.selectedMonth }); this.meetings = result.meetings || []; this.statuses = result.statuses || this.statuses; } catch (error) { this.notify(error.message, 'error'); } finally { this.loading = false; } },
+        async fetchAllPendingItems() { this.pendingLoading = true; try { this.globalPendingItems = await this.callApi('apiGetAllPendingActionItems') || []; } catch (error) { this.notify('全域未結案載入失敗：' + error.message, 'error'); } finally { this.pendingLoading = false; } },
+        async fetchAllCompletedItems() { this.completedLoading = true; try { this.globalCompletedItems = await this.callApi('apiGetAllCompletedActionItems') || []; } catch (error) { this.notify('全域已完成事項載入失敗：' + error.message, 'error'); } finally { this.completedLoading = false; } },
+        openImportModal() { this.resetImportModal(); this.importModal.open = true; },
+        closeImportModal() { this.resetImportModal(); this.importModal.open = false; },
+        resetImportModal() { this.importModal.mode = 'file'; this.importModal.fileName = ''; this.importModal.pasteText = ''; this.importModal.preview = []; this.importModal.error = ''; this.importModal.dragActive = false; this.importModal.importing = false; },
+        setImportMode(mode) { if (mode !== 'file' && mode !== 'paste') return; this.importModal.mode = mode; this.importModal.preview = []; this.importModal.error = ''; this.importModal.fileName = ''; },
+        triggerImportFilePicker() { const input = this.$refs.importFileInput; if (input) input.click(); },
+        handleImportFileChange(event) { const file = event.target.files && event.target.files[0]; event.target.value = ''; if (file) this.parseImportFile(file); },
+        handleImportDrop(event) { this.importModal.dragActive = false; const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0]; if (file) this.parseImportFile(file); },
+        async parseImportFile(file) { if (!/\.(xlsx|xls)$/i.test(file.name || '')) { this.importModal.preview = []; this.importModal.error = '請選擇 .xlsx 或 .xls 格式的 Excel 檔案。'; return; } if (!window.XLSX) { this.importModal.preview = []; this.importModal.error = 'Excel 解析套件尚未載入，請確認網路連線後重新整理頁面。'; return; } try { const buffer = await file.arrayBuffer(); const workbook = XLSX.read(buffer, { type: 'array', cellDates: false }); const firstSheetName = workbook.SheetNames[0]; if (!firstSheetName) throw new Error('找不到可讀取的工作表。'); const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], { header: 1, defval: '', raw: false }); this.importModal.fileName = file.name; this.buildImportPreview(rows); } catch (error) { this.importModal.preview = []; this.importModal.error = 'Excel 解析失敗：' + (error.message || String(error)); } },
+        parsePastedImport() { const text = this.importModal.pasteText || ''; if (!text.trim()) { this.importModal.preview = []; this.importModal.error = ''; return; } const rows = text.split(/\r?\n/).map(line => line.split('\t')); this.buildImportPreview(rows); },
+        buildImportPreview(rows) { const preview = []; const errors = []; (rows || []).forEach((rawRow, index) => { const row = (Array.isArray(rawRow) ? rawRow : []).map(value => String(value === undefined || value === null ? '' : value).trim()); if (!row.some(Boolean)) return; const date = this.parseExternalDate(row[0]); const times = this.parseExternalTimeRange(row[2]); const title = String(row[3] || '').trim(); if (!date && index === 0) return; if (!date) { errors.push('第 ' + (index + 1) + ' 列日期無法辨識。'); return; } if (!times) { errors.push('第 ' + (index + 1) + ' 列時間須為例如 1400-1430 或 14:00-14:30。'); return; } if (!title) { errors.push('第 ' + (index + 1) + ' 列缺少會議名稱。'); return; } const items = row.slice(4).filter(Boolean).map(content => ({ content, source_person: '', status: '待處理', notes: '' })); preview.push({ date, start_time: times.start_time, end_time: times.end_time, title, items }); }); if (errors.length) { this.importModal.preview = []; this.importModal.error = errors.join(' '); return; } this.importModal.preview = preview; this.importModal.error = preview.length ? '' : '找不到可匯入的資料，請確認欄位順序為日期、星期、時間、會議名稱、改善事項。'; },
+        parseExternalDate(value) { if (value instanceof Date && !isNaN(value.getTime())) return this.formatLocalDate(value); if (typeof value === 'number' && window.XLSX && XLSX.SSF && XLSX.SSF.parse_date_code) { const excelDate = XLSX.SSF.parse_date_code(value); if (excelDate) return this.makeImportDate(excelDate.y, excelDate.m, excelDate.d); } const text = String(value || '').trim(); if (!text) return ''; let match = text.match(/^(\d{4})\s*(?:年|[/.\-])\s*(\d{1,2})\s*(?:月|[/.\-])\s*(\d{1,2})\s*日?$/); if (match) return this.makeImportDate(match[1], match[2], match[3]); match = text.match(/^(\d{1,2})\s*月\s*(\d{1,2})\s*日?$/); if (match) return this.makeImportDate(new Date().getFullYear(), match[1], match[2]); match = text.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/); if (match) { const year = match[3].length === 2 ? 2000 + Number(match[3]) : Number(match[3]); return this.makeImportDate(year, match[1], match[2]); } match = text.match(/^(\d{1,2})[/.\-](\d{1,2})$/); if (match) return this.makeImportDate(new Date().getFullYear(), match[1], match[2]); return ''; },
+        makeImportDate(year, month, day) { const date = new Date(Number(year), Number(month) - 1, Number(day)); return date.getFullYear() === Number(year) && date.getMonth() === Number(month) - 1 && date.getDate() === Number(day) ? this.formatLocalDate(date) : ''; },
+        parseExternalTimeRange(value) { const parts = String(value || '').trim().replace(/\s+/g, '').split(/[-–—~～]/); if (parts.length !== 2) return null; const start = this.normalizeImportTime(parts[0]); const end = this.normalizeImportTime(parts[1]); return start && end && end > start ? { start_time: start, end_time: end } : null; },
+        normalizeImportTime(value) { const text = String(value || '').trim(); let hours; let minutes; if (/^\d{3,4}$/.test(text)) { const compact = text.padStart(4, '0'); hours = Number(compact.slice(0, 2)); minutes = Number(compact.slice(2)); } else { const match = text.match(/^(\d{1,2}):(\d{2})$/); if (!match) return ''; hours = Number(match[1]); minutes = Number(match[2]); } if (hours > 23 || minutes > 59) return ''; return String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0'); },
+        async confirmImport() { if (!this.importModal.preview.length || this.importModal.importing) return; const payload = JSON.parse(JSON.stringify(this.importModal.preview)); const itemCount = payload.reduce((count, meeting) => count + meeting.items.length, 0); this.importModal.importing = true; try { const result = await this.callApi('apiBatchImportMeetings', payload); await Promise.all([this.fetchCurrentMonthMeetings(), this.fetchAllPendingItems(), this.fetchAllCompletedItems()]); this.closeImportModal(); this.notify('成功匯入 ' + (result.count || payload.length) + ' 場會議與 ' + (result.itemCount === undefined ? itemCount : result.itemCount) + ' 筆改善事項。'); } catch (error) { this.importModal.error = '匯入失敗：' + error.message; } finally { this.importModal.importing = false; } },
+        formatLocalDate(date) { const year = date.getFullYear(); const month = String(date.getMonth() + 1).padStart(2, '0'); const day = String(date.getDate()).padStart(2, '0'); return year + '-' + month + '-' + day; },
+        timeFilterButtonClass(activeFilter, optionValue) { return activeFilter === optionValue ? 'bg-indigo-600 text-white font-medium shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'; },
+        parseMeetingDate(dateText) { if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText || '')) return null; const parts = dateText.split('-').map(Number); return new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0); },
+        isWithinTimeFilter(meetingDate, filter) { const target = this.parseMeetingDate(meetingDate); if (filter === 'all') return true; if (!target) return false; const today = new Date(); today.setHours(0, 0, 0, 0); if (filter === 'custom') { const start = this.parseMeetingDate(this.customDateRange.start); const end = this.parseMeetingDate(this.customDateRange.end); if (!start || !end) return false; if (target < start) return false; end.setHours(23, 59, 59, 999); return target <= end; } const threshold = new Date(today); if (filter === '30d') threshold.setDate(today.getDate() - 30); else if (filter === '90d') threshold.setDate(today.getDate() - 90); else if (filter === '6m') threshold.setMonth(today.getMonth() - 6); else if (filter === '1y') threshold.setFullYear(today.getFullYear() - 1); return target >= threshold; },
+        filterActionEntries(entries, search, timeFilter) { const keyword = (search.keyword || '').toLowerCase(); const source = (search.source || '').toLowerCase(); return entries.filter(({ meeting, item }) => this.isWithinTimeFilter(meeting.date, timeFilter) && (!keyword || ((item.content || '') + ' ' + (meeting.title || '')).toLowerCase().includes(keyword)) && (!source || (item.source_person || '').toLowerCase().includes(source))); },
+        openPendingDashboard(shouldScroll) { this.activeTab = 'pending'; if (!shouldScroll) return; this.pendingTimeFilter = 'all'; this.$nextTick(() => { const target = document.getElementById('pending-list'); if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' }); }); },
+        changeCalendarMonth(offset) { const parts = this.selectedMonth.split('-').map(Number); const target = new Date(parts[0], parts[1] - 1 + offset, 1); this.selectedMonth = target.getFullYear() + '-' + String(target.getMonth() + 1).padStart(2, '0'); this.fetchCurrentMonthMeetings(); },
+        goToday() { this.selectedMonth = this.formatLocalDate(new Date()).slice(0, 7); this.fetchCurrentMonthMeetings(); },
+        tabClass(tab) { return this.activeTab === tab ? 'border-b-2 border-indigo-600 text-indigo-700' : 'text-slate-500 hover:text-slate-800'; },
+        mobileTabClass(tab) { return this.activeTab === tab ? 'text-indigo-700' : 'text-slate-500'; },
+        dayOf(date) { return date ? String(Number(date.slice(-2))) : ''; },
+        statusClass(status) { return status === '已完成' ? 'bg-emerald-100 text-emerald-700' : status === '處理中' ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'; },
+        toggleMeeting(id) { this.expanded[id] = !this.expanded[id]; },
+        openMeetingModal(meeting, presetDate) { this.meetingModal.form = meeting ? { meeting_id: meeting.meeting_id, date: meeting.date, start_time: meeting.start_time, end_time: meeting.end_time, title: meeting.title } : { ...blankMeeting(), date: presetDate || blankMeeting().date }; this.meetingModal.open = true; },
+        closeMeetingModal() { this.meetingModal.open = false; },
+        openMeetingDetails(meeting) { this.meetingDetails = { open: true, meeting }; },
+        closeMeetingDetails() { this.meetingDetails = { open: false, meeting: null }; },
+        saveMeeting() {
+          if (this.saving) return;
+          // 不可將 Vue Proxy 直接交給 google.script.run，先轉為純 JavaScript 物件。
+          const cleanData = JSON.parse(JSON.stringify(this.meetingModal.form));
+          this.saving = true;
+          google.script.run
+            .withSuccessHandler((res) => {
+              this.closeMeetingModal();
+              this.meetingModal.form = blankMeeting();
+              this.selectedMonth = cleanData.date.slice(0, 7);
+              this.fetchCurrentMonthMeetings().finally(() => {
+                this.saving = false;
+                this.notify((res && res.message) || '會議已儲存。');
+              });
+            })
+            .withFailureHandler((err) => {
+              this.saving = false;
+              const message = (err && err.message) ? err.message : String(err || '未知錯誤');
+              alert('儲存失敗原因: ' + message);
+              this.notify(message, 'error');
+            })
+            .apiSaveMeeting(cleanData);
+        },
+        openItemModal(item, meetingId) { this.itemModal.form = item ? { ...item } : { ...blankItem(), meeting_id: meetingId }; this.itemModal.open = true; },
+        closeItemModal() { this.itemModal.open = false; },
+        async saveItem() { this.saving = true; try { const cleanData = JSON.parse(JSON.stringify(this.itemModal.form)); const result = await this.callApi('apiSaveActionItem', cleanData); const id = cleanData.meeting_id; this.closeItemModal(); this.expanded[id] = true; await Promise.all([this.fetchCurrentMonthMeetings(), this.fetchAllPendingItems(), this.fetchAllCompletedItems()]); this.notify(result.message); } catch (error) { this.notify(error.message, 'error'); } finally { this.saving = false; } },
+        startQuickAdd(meeting) { this.quickAddMeetingId = meeting.meeting_id; this.quickItemContent = ''; this.expanded[meeting.meeting_id] = true; this.$nextTick(() => { const input = Array.isArray(this.$refs.quickInput) ? this.$refs.quickInput[0] : this.$refs.quickInput; if (input) input.focus(); }); },
+        cancelQuickAdd() { this.quickAddMeetingId = ''; this.quickItemContent = ''; },
+        async saveQuickItem(meeting) { const content = this.quickItemContent.trim(); if (!content) return; this.saving = true; try { const result = await this.callApi('apiSaveActionItem', { meeting_id: meeting.meeting_id, content, status: '待處理', source_person: '', notes: '' }); this.cancelQuickAdd(); await Promise.all([this.fetchCurrentMonthMeetings(), this.fetchAllPendingItems(), this.fetchAllCompletedItems()]); this.expanded[meeting.meeting_id] = true; this.notify(result.message); } catch (error) { this.notify(error.message, 'error'); } finally { this.saving = false; } },
+        async toggleStatus(item) { await this.setStatus(item, item.status === '已完成' ? '待處理' : '已完成'); },
+        async setStatus(item, status) { try { const result = await this.callApi('apiUpdateItemStatus', item.item_id, status); item.status = status; if (status === '已完成') { this.globalPendingItems = this.globalPendingItems.filter(pending => pending.item_id !== item.item_id); await this.fetchAllCompletedItems(); } else { this.globalCompletedItems = this.globalCompletedItems.filter(completed => completed.item_id !== item.item_id); await this.fetchAllPendingItems(); } this.notify(result.message); } catch (error) { this.notify(error.message, 'error'); } },
+        async deleteItem(item) { if (!confirm('確定要刪除此改善事項嗎？')) return; try { const result = await this.callApi('apiDeleteActionItem', item.item_id); this.globalPendingItems = this.globalPendingItems.filter(pending => pending.item_id !== item.item_id); this.globalCompletedItems = this.globalCompletedItems.filter(completed => completed.item_id !== item.item_id); await this.fetchCurrentMonthMeetings(); this.notify(result.message); } catch (error) { this.notify(error.message, 'error'); } },
+        async syncMeeting(meeting) { try { const result = await this.callApi('apiSyncToGoogleCalendar', meeting.meeting_id); this.notify(result.message); } catch (error) { this.notify(error.message, 'error'); } },
+        notify(message, type = 'success') { clearTimeout(this.toastTimer); this.toast = { message, type }; this.toastTimer = setTimeout(() => { this.toast.message = ''; }, 3200); }
+      }
+    });
+    app.config.errorHandler = (error, instance, info) => showBootError(error, 'Vue 元件錯誤（' + info + '）');
+    try { app.mount('#app'); } catch (error) { showBootError(error, 'Vue 啟動錯誤'); }
+  </script>
+  <style>
+    .input-field { display:block; width:100%; margin-top:.35rem; border-radius:.5rem; border:1px solid #cbd5e1; padding:.55rem .7rem; font-size:.875rem; line-height:1.25rem; }
+    .input-field:focus { border-color:#6366f1; outline:2px solid transparent; box-shadow:0 0 0 2px #c7d2fe; }
+    .icon-button { border-radius:.5rem; padding:.4rem; color:#64748b; }
+    .icon-button:hover { background:#eef2ff; color:#4f46e5; }
+  </style>
+</body>
+</html>
